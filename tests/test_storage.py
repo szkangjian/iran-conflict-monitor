@@ -19,15 +19,16 @@ def tmp_db(monkeypatch, tmp_path):
 
 def _event(**kwargs):
     base = {
-        "guid": "test-guid-1",
-        "title": "Test Event",
-        "summary": "Summary text",
-        "url": "https://example.com/1",
-        "source": "Test Source",
-        "published": datetime.now(timezone.utc).isoformat(),
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "severity": "high",
-        "tags": "nuclear,irgc",
+        "guid":        "test-guid-1",
+        "title":       "Test Event",
+        "summary":     "Summary text",
+        "url":         "https://example.com/1",
+        "source":      "Test Source",
+        "published":   datetime.now(timezone.utc).isoformat(),
+        "fetched_at":  datetime.now(timezone.utc).isoformat(),
+        "severity":    "high",
+        "tags":        "nuclear,irgc",
+        "event_score": 5.0,
     }
     base.update(kwargs)
     return base

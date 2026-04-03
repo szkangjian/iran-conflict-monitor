@@ -48,9 +48,10 @@ class TestClassifySeverity:
         e = make_entry(title="Israeli airstrike on Iranian military base")
         assert classify_severity(e) == "critical"
 
-    def test_missile_is_high(self):
+    def test_missile_is_critical(self):
+        # "ballistic missile" is in SEVERITY_CRITICAL_KEYWORDS
         e = make_entry(title="Iran test-fires new ballistic missile")
-        assert classify_severity(e) == "high"
+        assert classify_severity(e) == "critical"
 
     def test_sanctions_is_high(self):
         e = make_entry(title="US Treasury imposes sweeping sanctions on Iran")

@@ -3,10 +3,10 @@ import logging
 import feedparser
 import requests
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 
 from config import RSS_FEEDS, NEWS_API_KEY
 from monitor.classifier import is_relevant, classify_severity, extract_tags
+from monitor.scorer import compute_event_score
 from monitor.storage import upsert_event
 
 logger = logging.getLogger(__name__)
@@ -23,54 +23,56 @@ def _parse_date(entry) -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _entry_to_dict(entry, source_name: str) -> dict:
-    title = entry.get("title", "").strip()
-    summary = entry.get("summary", entry.get("description", "")).strip()
-    # Strip HTML tags from summary
-    summary = _strip_html(summary)[:1000]
-    url = entry.get("link", "")
-    guid = entry.get("id", entry.get("link", ""))
-    if not guid:
-        guid = hashlib.md5(f"{title}{url}".encode()).hexdigest()
-
-    return {
-        "guid": guid,
-        "title": title,
-        "summary": summary,
-        "url": url,
-        "source": source_name,
-        "published": _parse_date(entry),
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "severity": "",
-        "tags": "",
-    }
-
-
 def _strip_html(text: str) -> str:
     import re
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
+def _entry_to_dict(entry, source_name: str) -> dict:
+    title   = entry.get("title", "").strip()
+    summary = _strip_html(entry.get("summary", entry.get("description", "")).strip())[:1000]
+    url     = entry.get("link", "")
+    guid    = entry.get("id", entry.get("link", ""))
+    if not guid:
+        guid = hashlib.md5(f"{title}{url}".encode()).hexdigest()
+
+    return {
+        "guid":        guid,
+        "title":       title,
+        "summary":     summary,
+        "url":         url,
+        "source":      source_name,
+        "published":   _parse_date(entry),
+        "fetched_at":  datetime.now(timezone.utc).isoformat(),
+        "severity":    "",
+        "tags":        "",
+        "event_score": None,
+    }
+
+
+def _classify_and_store(entry: dict) -> bool:
+    entry["severity"]    = classify_severity(entry)
+    entry["tags"]        = ",".join(extract_tags(entry))
+    entry["event_score"] = compute_event_score(entry)
+    return upsert_event(entry)
+
+
 def fetch_rss(feed_cfg: dict) -> int:
-    name = feed_cfg["name"]
-    url = feed_cfg["url"]
+    name, url = feed_cfg["name"], feed_cfg["url"]
     new_count = 0
     try:
         feed = feedparser.parse(url, request_headers={"User-Agent": "IranConflictMonitor/1.0"})
         if feed.bozo and not feed.entries:
             logger.warning("Feed parse error for %s: %s", name, feed.bozo_exception)
             return 0
-
         for raw in feed.entries:
             entry = _entry_to_dict(raw, name)
             if not is_relevant(entry):
                 continue
-            entry["severity"] = classify_severity(entry)
-            entry["tags"] = ",".join(extract_tags(entry))
-            if upsert_event(entry):
+            if _classify_and_store(entry):
                 new_count += 1
-                logger.info("[%s] New event (%s): %s", name, entry["severity"], entry["title"][:80])
-
+                logger.info("[%s] New event (%s, score=%.1f): %s",
+                            name, entry["severity"], entry["event_score"], entry["title"][:80])
     except Exception as exc:
         logger.error("Error fetching %s: %s", name, exc)
     return new_count
@@ -90,21 +92,20 @@ def fetch_newsapi(query: str = "Iran military conflict") -> int:
         resp.raise_for_status()
         for article in resp.json().get("articles", []):
             entry = {
-                "guid": hashlib.md5(article["url"].encode()).hexdigest(),
-                "title": article.get("title", "").strip(),
-                "summary": (article.get("description") or "")[:1000],
-                "url": article.get("url", ""),
-                "source": article.get("source", {}).get("name", "NewsAPI"),
-                "published": article.get("publishedAt", datetime.now(timezone.utc).isoformat()),
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-                "severity": "",
-                "tags": "",
+                "guid":        hashlib.md5(article["url"].encode()).hexdigest(),
+                "title":       article.get("title", "").strip(),
+                "summary":     (article.get("description") or "")[:1000],
+                "url":         article.get("url", ""),
+                "source":      article.get("source", {}).get("name", "NewsAPI"),
+                "published":   article.get("publishedAt", datetime.now(timezone.utc).isoformat()),
+                "fetched_at":  datetime.now(timezone.utc).isoformat(),
+                "severity":    "",
+                "tags":        "",
+                "event_score": None,
             }
             if not is_relevant(entry):
                 continue
-            entry["severity"] = classify_severity(entry)
-            entry["tags"] = ",".join(extract_tags(entry))
-            if upsert_event(entry):
+            if _classify_and_store(entry):
                 new_count += 1
     except Exception as exc:
         logger.error("NewsAPI fetch error: %s", exc)

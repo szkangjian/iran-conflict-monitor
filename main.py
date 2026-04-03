@@ -30,16 +30,35 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
+def _score_and_store():
+    from monitor.scorer import compute_score
+    from monitor.storage import upsert_daily_score
+    from datetime import datetime, timezone
+    result = compute_score()
+    upsert_daily_score({
+        "date":             datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "score":            result["score"],
+        "d1":               result["dimensions"]["d1"],
+        "d2":               result["dimensions"]["d2"],
+        "d3":               result["dimensions"]["d3"],
+        "d4":               result["dimensions"]["d4"],
+        "d5":               result["dimensions"]["d5"],
+        "nuclear_override": int(result["nuclear_override"]),
+        "computed_at":      result["computed_at"],
+    })
+
+
 def run_scheduler():
     from apscheduler.schedulers.background import BackgroundScheduler
     from monitor.fetcher import run_fetch_cycle
     from monitor.alerts import send_pending_alerts
 
     scheduler = BackgroundScheduler(timezone="UTC")
-    scheduler.add_job(run_fetch_cycle, "interval", minutes=FETCH_INTERVAL_MINUTES, id="fetch")
-    scheduler.add_job(send_pending_alerts, "interval", minutes=5, id="alerts")
+    scheduler.add_job(run_fetch_cycle,    "interval", minutes=FETCH_INTERVAL_MINUTES, id="fetch")
+    scheduler.add_job(send_pending_alerts,"interval", minutes=5,                      id="alerts")
+    scheduler.add_job(_score_and_store,   "interval", minutes=60,                     id="score")
     scheduler.start()
-    logger.info("Scheduler started (fetch every %d min)", FETCH_INTERVAL_MINUTES)
+    logger.info("Scheduler started (fetch every %d min, score every 60 min)", FETCH_INTERVAL_MINUTES)
     return scheduler
 
 
@@ -66,6 +85,7 @@ def main():
         logger.info("Running initial fetch …")
         run_fetch_cycle()
         scheduler = run_scheduler()
+        _score_and_store()   # compute initial score right after first fetch
 
     try:
         from dashboard.app import run_dashboard
